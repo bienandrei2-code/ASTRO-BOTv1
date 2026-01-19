@@ -14,12 +14,6 @@ const {
   SlashCommandBuilder
 } = require("discord.js");
 
-// ------------------------
-// KEEP REPLIT ALIVE
-// ------------------------
-const app = express();
-app.get("/", (req, res) => res.send("ASTRO is alive!"));
-app.listen(3000);
 
 // ------------------------
 // BOT CLIENT
