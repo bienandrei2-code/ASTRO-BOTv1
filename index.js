@@ -55,8 +55,8 @@ const client = new Client({
 // ------------------------
 // SLASH COMMANDS SETUP
 // ------------------------
-const CLIENT_ID = "YOUR_BOT_ID";  // Replace with your bot ID
-const GUILD_ID = "YOUR_GUILD_ID";  // Replace with your server ID
+const CLIENT_ID = "1460924904450035764";  // Replace with your bot ID
+const GUILD_ID = "1457264127939579988";  // Replace with your server ID
 
 const commands = [
   new SlashCommandBuilder()
