@@ -24,6 +24,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions
+    GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Message, Partials.Reaction, Partials.Channel]
 });
@@ -77,6 +78,75 @@ const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 client.once("ready", () => {
   console.log(`ASTRO online as ${client.user.tag}`);
 });
+
+// ------------------------
+// AUTO VB SETUP
+// ------------------------
+if (interaction.commandName === "autovb") {
+  if (interaction.user.id !== interaction.guild.ownerId) {
+    return interaction.reply({ content: "❌ Owner only", ephemeral: true });
+  }
+
+  const channels = interaction.guild.channels.cache
+    .filter(c => c.isTextBased())
+    .map(c => ({ label: c.name, value: c.id }));
+
+  const selectDetect = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("vb_detect")
+      .setPlaceholder("Select detection channels")
+      .setMinValues(1)
+      .setMaxValues(channels.length)
+      .addOptions(channels)
+  );
+
+  await interaction.reply({
+    content: "Select channels where VB will be detected:",
+    components: [selectDetect],
+    ephemeral: true
+  });
+
+  const temp = {};
+  const collector = interaction.channel.createMessageComponentCollector({ time: 60000 });
+
+  collector.on("collect", async i => {
+    if (i.user.id !== interaction.user.id) return;
+
+    if (i.customId === "vb_detect") {
+      temp.detect = i.values;
+
+      const popupRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("vb_popup")
+          .setPlaceholder("Select popup channel")
+          .addOptions(channels)
+      );
+
+      await i.update({
+        content: "Select popup channel for warnings:",
+        components: [popupRow]
+      });
+    }
+
+    if (i.customId === "vb_popup") {
+      const data = loadVB();
+      data[interaction.guild.id] = {
+        channels: temp.detect,
+        popup: i.values[0],
+        warnings: {}
+      };
+      saveVB(data);
+
+      await i.update({
+        content: "✅ Auto VB detector setup complete",
+        components: []
+      });
+
+      collector.stop();
+    }
+  });
+}
+
 
 // ------------------------
 // /VERIFIER INTERACTIONS
@@ -262,3 +332,39 @@ client.on("messageReactionAdd", async (reaction, user) => {
 // LOGIN BOT
 // ------------------------
 client.login(process.env.TOKEN);
+
+// ------------------------
+// AUTO VB DETECTOR
+// ------------------------
+const BAD_WORDS = ["fuck", "shit", "bitch", "asshole"];
+
+client.on("messageCreate", async message => {
+  if (!message.guild || message.author.bot) return;
+
+  const vb = loadVB()[message.guild.id];
+  if (!vb) return;
+  if (!vb.channels.includes(message.channel.id)) return;
+
+  const found = BAD_WORDS.find(w =>
+    message.content.toLowerCase().includes(w)
+  );
+  if (!found) return;
+
+  vb.warnings[message.author.id] =
+    (vb.warnings[message.author.id] || 0) + 1;
+
+  saveVB(loadVB());
+
+  const embed = new EmbedBuilder()
+    .setColor("Red")
+    .setTitle("🚨 VB DETECTED!")
+    .setDescription(
+      `**User:** ${message.author}\n` +
+      `**Word:** \`${found}\`\n` +
+      `**Warnings:** ${vb.warnings[message.author.id]}`
+    );
+
+  const popup = message.guild.channels.cache.get(vb.popup);
+  if (popup) popup.send({ embeds: [embed] });
+});
+
