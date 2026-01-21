@@ -1,8 +1,9 @@
-// ------------------------
-// IMPORTS & CONFIG
-// ------------------------
+// ========================
+// IMPORTS & ENV
+// ========================
 const fs = require("fs");
-require("dotenv").config(); // load TOKEN from .env
+require("dotenv").config();
+
 const {
   Client,
   GatewayIntentBits,
@@ -15,18 +16,17 @@ const {
   SlashCommandBuilder
 } = require("discord.js");
 
-// ------------------------
+// ========================
 // CONFIG FILES
-// ------------------------
+// ========================
 const VERIFIER_CONFIG = "./verifierConfig.json";
 const VB_CONFIG = "./vbConfig.json";
 
-// Load/save helper functions
-function loadConfig() {
+function loadVerifier() {
   if (!fs.existsSync(VERIFIER_CONFIG)) return {};
   return JSON.parse(fs.readFileSync(VERIFIER_CONFIG));
 }
-function saveConfig(data) {
+function saveVerifier(data) {
   fs.writeFileSync(VERIFIER_CONFIG, JSON.stringify(data, null, 2));
 }
 
@@ -38,9 +38,9 @@ function saveVB(data) {
   fs.writeFileSync(VB_CONFIG, JSON.stringify(data, null, 2));
 }
 
-// ------------------------
-// CREATE CLIENT
-// ------------------------
+// ========================
+// CLIENT
+// ========================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -52,187 +52,169 @@ const client = new Client({
   partials: [Partials.Message, Partials.Reaction, Partials.Channel]
 });
 
-// ------------------------
-// SLASH COMMANDS SETUP
-// ------------------------
-const CLIENT_ID = "1460924904450035764";  // Replace with your bot ID
-const GUILD_ID = "1457264127939579988";  // Replace with your server ID
+// ========================
+// SLASH COMMAND REGISTRATION
+// ========================
+const CLIENT_ID = "1460924904450035764";
+const GUILD_ID = "1457264127939579988";
 
 const commands = [
   new SlashCommandBuilder()
     .setName("verifier")
-    .setDescription("Setup or manage verification")
-    .addSubcommand(sub => sub.setName("set").setDescription("Setup verifier channels and roles"))
-    .addSubcommand(sub => sub.setName("scan-old").setDescription("Scan old messages")),
+    .setDescription("Verification system")
+    .addSubcommand(s => s.setName("set").setDescription("Setup verifier"))
+    .addSubcommand(s => s.setName("scan-old").setDescription("Scan old messages")),
   new SlashCommandBuilder()
     .setName("autovb")
-    .setDescription("Setup auto verbal abuse detection")
-].map(cmd => cmd.toJSON());
+    .setDescription("Setup Auto Verbal Abuse detector")
+].map(c => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
 (async () => {
-  try {
-    console.log("🔄 Registering slash commands...");
-    await rest.put(
-      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-      { body: commands }
-    );
-    console.log("✅ Slash commands registered successfully!");
-  } catch (err) {
-    console.error("❌ Error registering commands:", err);
-  }
+  await rest.put(
+    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+    { body: commands }
+  );
+  console.log("✅ Slash commands registered");
 })();
 
-// ------------------------
-// BOT READY
-// ------------------------
+// ========================
+// READY
+// ========================
 client.once("ready", () => {
-  console.log(`ASTRO online as ${client.user.tag}`);
+  console.log(`🟢 ASTRO online as ${client.user.tag}`);
 });
 
-// ------------------------
-// INTERACTION HANDLER
-// ------------------------
+// ========================
+// INTERACTIONS
+// ========================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // Only server owner can use commands
   if (interaction.user.id !== interaction.guild.ownerId) {
-    return interaction.reply({ content: "❌ Only the owner can use this.", ephemeral: true });
+    return interaction.reply({ content: "❌ Owner only", ephemeral: true });
   }
 
-  const verifierData = loadConfig();
-  const vbData = loadVB();
-
-  // ------------------------
-  // VERIFIER COMMAND
-  // ------------------------
+  // --------------------
+  // VERIFIER
+  // --------------------
   if (interaction.commandName === "verifier") {
     const sub = interaction.options.getSubcommand();
+    const verifierData = loadVerifier();
 
-    // VERIFIER SET
+    // SETUP
     if (sub === "set") {
       const channels = interaction.guild.channels.cache
-        .filter(ch => ch.isTextBased())
-        .map(ch => ({ label: ch.name, value: ch.id }));
+        .filter(c => c.isTextBased())
+        .map(c => ({ label: c.name, value: c.id }));
 
-      const roles = interaction.guild.roles.cache
-        .map(r => ({ label: r.name, value: r.id }));
+      const roles = interaction.guild.roles.cache.map(r => ({
+        label: r.name,
+        value: r.id
+      }));
 
-      const noneOption = { label: "None", value: "none" };
-
-      const mainMenu = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("main_channel")
-          .setPlaceholder("Select Main Channel")
-          .addOptions(channels)
-      );
-      const backupMenu = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("backup_channel")
-          .setPlaceholder("Select Backup Channel")
-          .addOptions(channels)
-      );
-      const giveMenu = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("role_give")
-          .setPlaceholder("Select Role to Give")
-          .addOptions(roles)
-      );
-      const removeMenu = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("role_remove")
-          .setPlaceholder("Select Role to Remove")
-          .addOptions([...roles, noneOption])
-      );
+      const menus = [
+        new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("main")
+            .setPlaceholder("Main verification channel")
+            .addOptions(channels)
+        ),
+        new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("backup")
+            .setPlaceholder("Backup channel")
+            .addOptions(channels)
+        ),
+        new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("give")
+            .setPlaceholder("Role to give")
+            .addOptions(roles)
+        ),
+        new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("remove")
+            .setPlaceholder("Role to remove")
+            .addOptions([{ label: "None", value: "none" }, ...roles])
+        )
+      ];
 
       await interaction.reply({
-        content: "Please select your verifier settings:",
-        components: [mainMenu, backupMenu, giveMenu, removeMenu],
+        content: "Setup verifier:",
+        components: menus,
         ephemeral: true
       });
 
+      const temp = {};
       const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
-      let tempConfig = {};
 
       collector.on("collect", async i => {
-        if (i.user.id !== interaction.user.id) return;
-
-        switch (i.customId) {
-          case "main_channel": tempConfig.mainChannel = i.values[0]; break;
-          case "backup_channel": tempConfig.backupChannel = i.values[0]; break;
-          case "role_give": tempConfig.roleToGive = i.values[0]; break;
-          case "role_remove": tempConfig.roleToRemove = i.values[0] === "none" ? null : i.values[0]; break;
+        if (i.user.id !== interaction.user.id) {
+          return i.reply({ content: "❌ Not for you", ephemeral: true });
         }
 
+        temp[i.customId] = i.values[0];
         await i.deferUpdate();
 
-        if (tempConfig.mainChannel && tempConfig.backupChannel && tempConfig.roleToGive !== undefined && tempConfig.roleToRemove !== undefined) {
-          verifierData[interaction.guild.id] = tempConfig;
-          saveConfig(verifierData);
-          await interaction.followUp({ content: "✅ Verifier setup complete!", ephemeral: true });
+        if (temp.main && temp.backup && temp.give && temp.remove !== undefined) {
+          verifierData[interaction.guild.id] = {
+            mainChannel: temp.main,
+            backupChannel: temp.backup,
+            roleToGive: temp.give,
+            roleToRemove: temp.remove === "none" ? null : temp.remove
+          };
+          saveVerifier(verifierData);
+          await interaction.followUp({ content: "✅ Verifier saved", ephemeral: true });
           collector.stop();
         }
       });
     }
 
-    // SCAN OLD MESSAGES
+    // SCAN OLD
     if (sub === "scan-old") {
       const cfg = verifierData[interaction.guild.id];
-      if (!cfg) return interaction.reply({ content: "❌ Verifier not set up yet.", ephemeral: true });
+      if (!cfg) return interaction.reply({ content: "❌ Not set up", ephemeral: true });
 
-      const mainChannel = client.channels.cache.get(cfg.mainChannel);
-      const backupChannel = client.channels.cache.get(cfg.backupChannel);
-      if (!mainChannel || !backupChannel) return interaction.reply({ content: "❌ Channels not found.", ephemeral: true });
+      const main = await client.channels.fetch(cfg.mainChannel);
+      const backup = await client.channels.fetch(cfg.backupChannel);
 
-      await interaction.reply({ content: "🔄 Scanning old messages...", ephemeral: true });
+      await interaction.reply({ content: "🔄 Scanning...", ephemeral: true });
 
-      const messages = await mainChannel.messages.fetch({ limit: 100 });
-      let repostCount = 0;
+      const msgs = await main.messages.fetch({ limit: 100 });
+      let count = 0;
 
-      for (const message of messages.values()) {
-        if (message.author.bot) continue;
-        const member = await interaction.guild.members.fetch(message.author.id).catch(() => null);
-        if (!member) continue;
-
-        if (member.roles.cache.has(cfg.roleToGive)) continue;
-
-        try {
-          await backupChannel.send({
-            content: `📌 Old message from ${member}:\n"${message.content}"`,
-            allowedMentions: { users: [member.id] }
-          });
-          repostCount++;
-        } catch (err) {
-          await backupChannel.send(`❌ Failed to repost message from ${member.tag}`);
-        }
+      for (const m of msgs.values()) {
+        if (m.author.bot) continue;
+        await backup.send(`📌 ${m.author}: ${m.content}`);
+        count++;
       }
 
-      await interaction.followUp({ content: `✅ Reposted ${repostCount} old messages`, ephemeral: true });
+      await interaction.followUp({ content: `✅ ${count} messages scanned`, ephemeral: true });
     }
   }
 
-  // ------------------------
-  // AUTO VB COMMAND
-  // ------------------------
+  // --------------------
+  // AUTO VB SETUP
+  // --------------------
   if (interaction.commandName === "autovb") {
     const channels = interaction.guild.channels.cache
       .filter(c => c.isTextBased())
       .map(c => ({ label: c.name, value: c.id }));
 
-    const selectDetect = new ActionRowBuilder().addComponents(
+    const detectMenu = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId("vb_detect")
-        .setPlaceholder("Select detection channels")
+        .setCustomId("detect")
+        .setPlaceholder("Channels to detect")
         .setMinValues(1)
         .setMaxValues(channels.length)
         .addOptions(channels)
     );
 
     await interaction.reply({
-      content: "Select channels where VB will be detected:",
-      components: [selectDetect],
+      content: "Select detection channels:",
+      components: [detectMenu],
       ephemeral: true
     });
 
@@ -240,100 +222,97 @@ client.on("interactionCreate", async interaction => {
     const collector = interaction.channel.createMessageComponentCollector({ time: 60000 });
 
     collector.on("collect", async i => {
-      if (i.user.id !== interaction.user.id) return;
+      if (i.user.id !== interaction.user.id) {
+        return i.reply({ content: "❌ Not for you", ephemeral: true });
+      }
 
-      if (i.customId === "vb_detect") {
-        temp.detect = i.values;
+      if (i.customId === "detect") {
+        temp.channels = i.values;
 
-        const popupRow = new ActionRowBuilder().addComponents(
+        const popupMenu = new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
-            .setCustomId("vb_popup")
-            .setPlaceholder("Select popup channel")
+            .setCustomId("popup")
+            .setPlaceholder("Popup channel")
             .addOptions(channels)
         );
 
-        await i.update({ content: "Select popup channel for warnings:", components: [popupRow] });
+        await i.update({ content: "Select popup channel:", components: [popupMenu] });
       }
 
-      if (i.customId === "vb_popup") {
-        const data = loadVB();
-        data[interaction.guild.id] = {
-          channels: temp.detect,
+      if (i.customId === "popup") {
+        const allVB = loadVB();
+        allVB[interaction.guild.id] = {
+          channels: temp.channels,
           popup: i.values[0],
           warnings: {}
         };
-        saveVB(data);
+        saveVB(allVB);
 
-        await i.update({ content: "✅ Auto VB detector setup complete", components: [] });
+        await i.deferUpdate();
+        await interaction.followUp({ content: "✅ Auto VB enabled", ephemeral: true });
         collector.stop();
       }
     });
   }
 });
 
-// ------------------------
-// REACTION VERIFICATION
-// ------------------------
+// ========================
+// VERIFICATION REACTION (BOT ONLY)
+// ========================
 client.on("messageReactionAdd", async (reaction, user) => {
   if (user.bot) return;
   if (reaction.partial) await reaction.fetch();
   if (reaction.message.partial) await reaction.message.fetch();
 
-  const data = loadConfig();
-  const cfg = data[reaction.message.guild.id];
-  if (!cfg) return;
-
-  if (![cfg.mainChannel, cfg.backupChannel].includes(reaction.message.channel.id)) return;
+  if (!reaction.message.author.bot) return;
   if (reaction.emoji.name !== "✅") return;
 
-  let member;
-  try { member = await reaction.message.guild.members.fetch(reaction.message.author.id); } catch { return; }
+  const cfg = loadVerifier()[reaction.message.guild.id];
+  if (!cfg) return;
 
-  const roleGive = reaction.message.guild.roles.cache.get(cfg.roleToGive);
-  const roleRemove = cfg.roleToRemove ? reaction.message.guild.roles.cache.get(cfg.roleToRemove) : null;
+  const member = await reaction.message.guild.members.fetch(reaction.message.author.id);
+  if (!member) return;
 
-  if (roleRemove && member.roles.cache.has(roleRemove.id)) await member.roles.remove(roleRemove).catch(() => {});
-  if (roleGive && !member.roles.cache.has(roleGive.id)) await member.roles.add(roleGive).catch(() => {});
-
-  const embed = new EmbedBuilder()
-    .setColor("Green")
-    .setTitle("✅ VERIFIED!")
-    .setDescription(`${member} was verified by ${user.tag} and is now a member!`)
-    .setFooter({ text: `Welcome to ${reaction.message.guild.name}! Members: ${reaction.message.guild.memberCount}` });
-
-  reaction.message.channel.send({ embeds: [embed] });
-  reaction.users.remove(user.id).catch(() => {});
+  if (cfg.roleToRemove) await member.roles.remove(cfg.roleToRemove).catch(() => {});
+  await member.roles.add(cfg.roleToGive).catch(() => {});
 });
 
-// ------------------------
-// AUTO VB DETECTOR LIVE
-// ------------------------
-const BAD_WORDS = ["fuck","shit","bitch","asshole"];
+// ========================
+// AUTO VB LIVE
+// ========================
+const BAD_WORDS = ["fuck", "shit", "bitch", "asshole"];
 
 client.on("messageCreate", async message => {
-  if (!message.guild || message.author.bot) return;
+  if (!message.guild || message.author.bot || !message.content) return;
 
-  const vb = loadVB()[message.guild.id];
+  const allVB = loadVB();
+  const vb = allVB[message.guild.id];
   if (!vb) return;
   if (!vb.channels.includes(message.channel.id)) return;
 
-  const found = BAD_WORDS.find(w => message.content.toLowerCase().includes(w));
+  const found = BAD_WORDS.find(w =>
+    message.content.toLowerCase().includes(w)
+  );
   if (!found) return;
 
-  vb.warnings[message.author.id] = (vb.warnings[message.author.id] || 0) + 1;
-  saveVB(loadVB());
+  vb.warnings[message.author.id] =
+    (vb.warnings[message.author.id] || 0) + 1;
+
+  saveVB(allVB);
 
   const embed = new EmbedBuilder()
     .setColor("Red")
-    .setTitle("🚨 VB DETECTED!")
-    .setDescription(`**User:** ${message.author}\n**Word:** \`${found}\`\n**Warnings:** ${vb.warnings[message.author.id]}`);
+    .setTitle("🚨 VB DETECTED")
+    .setDescription(
+      `User: ${message.author}\nWord: \`${found}\`\nWarnings: ${vb.warnings[message.author.id]}`
+    );
 
   const popup = message.guild.channels.cache.get(vb.popup);
   if (popup) popup.send({ embeds: [embed] });
 });
 
-// ------------------------
+// ========================
 // LOGIN
-// ------------------------
+// ========================
 client.login(process.env.TOKEN);
 
