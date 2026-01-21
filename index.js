@@ -103,11 +103,16 @@ client.on("interactionCreate", async interaction => {
     const sub = interaction.options.getSubcommand();
     const verifierData = loadVerifier();
 
+    // SETUP
     if (sub === "set") {
       const channels = interaction.guild.channels.cache
         .filter(c => c.isTextBased())
         .map(c => ({ label: c.name, value: c.id }));
-      const roles = interaction.guild.roles.cache.map(r => ({ label: r.name, value: r.id }));
+
+      const roles = interaction.guild.roles.cache.map(r => ({
+        label: r.name,
+        value: r.id
+      }));
 
       const menus = [
         new ActionRowBuilder().addComponents(
@@ -136,13 +141,19 @@ client.on("interactionCreate", async interaction => {
         )
       ];
 
-      await interaction.reply({ content: "Setup verifier:", components: menus, ephemeral: true });
+      await interaction.reply({
+        content: "Setup verifier:",
+        components: menus,
+        ephemeral: true
+      });
 
       const temp = {};
       const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
 
       collector.on("collect", async i => {
-        if (i.user.id !== interaction.user.id) return i.reply({ content: "❌ Not for you", ephemeral: true });
+        if (i.user.id !== interaction.user.id) {
+          return i.reply({ content: "❌ Not for you", ephemeral: true });
+        }
 
         temp[i.customId] = i.values[0];
         await i.deferUpdate();
@@ -192,91 +203,53 @@ client.on("interactionCreate", async interaction => {
       .filter(c => c.isTextBased())
       .map(c => ({ label: c.name, value: c.id }));
 
-    const roles = interaction.guild.roles.cache
-      .filter(r => r.id !== interaction.guild.id)
-      .map(r => ({ label: r.name, value: r.id }));
-
-    const members = interaction.guild.members.cache
-      .map(m => ({ label: m.user.username, value: m.id }))
-      .slice(0, 25);
-
     const detectMenu = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId("vb_detect")
-        .setPlaceholder("Select detection channels")
+        .setCustomId("detect")
+        .setPlaceholder("Channels to detect")
         .setMinValues(1)
         .setMaxValues(channels.length)
         .addOptions(channels)
     );
 
-    await interaction.reply({ content: "Select channels where VB will be detected:", components: [detectMenu], ephemeral: true });
+    await interaction.reply({
+      content: "Select detection channels:",
+      components: [detectMenu],
+      ephemeral: true
+    });
 
     const temp = {};
-    const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
+    const collector = interaction.channel.createMessageComponentCollector({ time: 60000 });
 
     collector.on("collect", async i => {
-      if (i.user.id !== interaction.user.id) return;
+      if (i.user.id !== interaction.user.id) {
+        return i.reply({ content: "❌ Not for you", ephemeral: true });
+      }
 
-      // STEP 1 - DETECT CHANNELS
-      if (i.customId === "vb_detect") {
-        temp.detect = i.values;
+      if (i.customId === "detect") {
+        temp.channels = i.values;
 
         const popupMenu = new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
-            .setCustomId("vb_popup")
-            .setPlaceholder("Select popup channel")
+            .setCustomId("popup")
+            .setPlaceholder("Popup channel")
             .addOptions(channels)
         );
 
         await i.update({ content: "Select popup channel:", components: [popupMenu] });
       }
 
-      // STEP 2 - POPUP CHANNEL
-      else if (i.customId === "vb_popup") {
-        temp.popup = i.values[0];
-
-        const roleMenu = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("vb_ping_roles")
-            .setPlaceholder("Select roles to ping (optional)")
-            .setMinValues(0)
-            .setMaxValues(Math.min(roles.length, 10))
-            .addOptions(roles)
-        );
-
-        const userMenu = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("vb_ping_users")
-            .setPlaceholder("Select users to ping (optional)")
-            .setMinValues(0)
-            .setMaxValues(10)
-            .addOptions(members)
-        );
-
-        await i.update({ content: "Select who should be pinged:", components: [roleMenu, userMenu] });
-      }
-
-      // STEP 3 - ROLES
-      else if (i.customId === "vb_ping_roles") {
-        temp.pingRoles = i.values;
-        await i.deferUpdate();
-      }
-
-      // STEP 4 - USERS
-      else if (i.customId === "vb_ping_users") {
-        temp.pingUsers = i.values;
-
-        const data = loadVB();
-        data[interaction.guild.id] = {
-          channels: temp.detect,
-          popup: temp.popup,
-          pingRoles: temp.pingRoles || [],
-          pingUsers: temp.pingUsers || [],
+      if (i.customId === "popup") {
+        const allVB = loadVB();
+        allVB[interaction.guild.id] = {
+          channels: temp.channels,
+          popup: i.values[0],
           warnings: {}
         };
-        saveVB(data);
+        saveVB(allVB);
 
-        await i.update({ content: "✅ Auto-VB setup complete!", components: [] });
+        await i.deferUpdate();
+        await interaction.followUp({ content: "✅ Auto VB enabled", ephemeral: true });
         collector.stop();
       }
     });
@@ -284,7 +257,7 @@ client.on("interactionCreate", async interaction => {
 });
 
 // ========================
-// VERIFICATION REACTION
+// VERIFICATION REACTION (BOT ONLY)
 // ========================
 client.on("messageReactionAdd", async (reaction, user) => {
   if (user.bot) return;
@@ -297,7 +270,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
   const cfg = loadVerifier()[reaction.message.guild.id];
   if (!cfg) return;
 
-  const member = await reaction.message.guild.members.fetch(user.id);
+  const member = await reaction.message.guild.members.fetch(reaction.message.author.id);
   if (!member) return;
 
   if (cfg.roleToRemove) await member.roles.remove(cfg.roleToRemove).catch(() => {});
@@ -307,34 +280,32 @@ client.on("messageReactionAdd", async (reaction, user) => {
 // ========================
 // AUTO VB LIVE
 // ========================
-const BAD_WORDS = ["fuck","shit","bitch","asshole"];
+const BAD_WORDS = ["fuck", "shit", "bitch", "asshole"];
 
 client.on("messageCreate", async message => {
-  if (!message.guild || message.author.bot) return;
+  if (!message.guild || message.author.bot || !message.content) return;
 
-  const vb = loadVB()[message.guild.id];
+  const allVB = loadVB();
+  const vb = allVB[message.guild.id];
   if (!vb) return;
   if (!vb.channels.includes(message.channel.id)) return;
 
-  const found = BAD_WORDS.find(w => message.content.toLowerCase().includes(w));
+  const found = BAD_WORDS.find(w =>
+    message.content.toLowerCase().includes(w)
+  );
   if (!found) return;
 
-  vb.warnings[message.author.id] = (vb.warnings[message.author.id] || 0) + 1;
-  saveVB(loadVB());
+  vb.warnings[message.author.id] =
+    (vb.warnings[message.author.id] || 0) + 1;
 
-  // 1️⃣ Detection channel message
-  await message.channel.send(`${message.author} has been detected for using **${found}**. ⚠️ Warnings: **${vb.warnings[message.author.id]}**`);
-
-  // 2️⃣ Popup channel embed
-  const rolePings = vb.pingRoles.map(r => `<@&${r}>`).join(" ");
-  const userPings = vb.pingUsers.map(u => `<@${u}>`).join(" ");
-  const allPings = [rolePings,userPings].filter(Boolean).join(" ");
+  saveVB(allVB);
 
   const embed = new EmbedBuilder()
     .setColor("Red")
-    .setTitle(`${message.author.username}`)
-    .setDescription(`He/She is now on **${vb.warnings[message.author.id]} warnings**\n\n${allPings}`)
-    .setFooter({ text: "VB detected!!" });
+    .setTitle("🚨 VB DETECTED")
+    .setDescription(
+      `User: ${message.author}\nWord: \`${found}\`\nWarnings: ${vb.warnings[message.author.id]}`
+    );
 
   const popup = message.guild.channels.cache.get(vb.popup);
   if (popup) popup.send({ embeds: [embed] });
