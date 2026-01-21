@@ -198,63 +198,111 @@ client.on("interactionCreate", async interaction => {
   // --------------------
   // AUTO VB SETUP
   // --------------------
-  if (interaction.commandName === "autovb") {
-    const channels = interaction.guild.channels.cache
-      .filter(c => c.isTextBased())
-      .map(c => ({ label: c.name, value: c.id }));
+ if (interaction.commandName === "autovb") {
+  const channels = interaction.guild.channels.cache
+    .filter(c => c.isTextBased())
+    .map(c => ({ label: c.name, value: c.id }));
 
-    const detectMenu = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("detect")
-        .setPlaceholder("Channels to detect")
-        .setMinValues(1)
-        .setMaxValues(channels.length)
-        .addOptions(channels)
-    );
+  const roles = interaction.guild.roles.cache
+    .filter(r => r.id !== interaction.guild.id)
+    .map(r => ({ label: r.name, value: r.id }));
 
-    await interaction.reply({
-      content: "Select detection channels:",
-      components: [detectMenu],
-      ephemeral: true
-    });
+  const members = interaction.guild.members.cache
+    .map(m => ({ label: m.user.username, value: m.id }))
+    .slice(0, 25); // Discord limit
 
-    const temp = {};
-    const collector = interaction.channel.createMessageComponentCollector({ time: 60000 });
+  const detectMenu = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("vb_detect")
+      .setPlaceholder("Select detection channels")
+      .setMinValues(1)
+      .setMaxValues(channels.length)
+      .addOptions(channels)
+  );
 
-    collector.on("collect", async i => {
-      if (i.user.id !== interaction.user.id) {
-        return i.reply({ content: "❌ Not for you", ephemeral: true });
-      }
+  await interaction.reply({
+    content: "Select channels where VB will be detected:",
+    components: [detectMenu],
+    ephemeral: true
+  });
 
-      if (i.customId === "detect") {
-        temp.channels = i.values;
+  const temp = {};
+  const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
 
-        const popupMenu = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("popup")
-            .setPlaceholder("Popup channel")
-            .addOptions(channels)
-        );
+  collector.on("collect", async i => {
+    if (i.user.id !== interaction.user.id) return;
 
-        await i.update({ content: "Select popup channel:", components: [popupMenu] });
-      }
+    // STEP 1
+    if (i.customId === "vb_detect") {
+      temp.detect = i.values;
 
-      if (i.customId === "popup") {
-        const allVB = loadVB();
-        allVB[interaction.guild.id] = {
-          channels: temp.channels,
-          popup: i.values[0],
-          warnings: {}
-        };
-        saveVB(allVB);
+      const popupMenu = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("vb_popup")
+          .setPlaceholder("Select popup channel")
+          .addOptions(channels)
+      );
 
-        await i.deferUpdate();
-        await interaction.followUp({ content: "✅ Auto VB enabled", ephemeral: true });
-        collector.stop();
-      }
-    });
-  }
-});
+      await i.update({ content: "Select popup channel:", components: [popupMenu] });
+    }
+
+    // STEP 2
+    else if (i.customId === "vb_popup") {
+      temp.popup = i.values[0];
+
+      const roleMenu = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("vb_ping_roles")
+          .setPlaceholder("Select roles to ping (optional)")
+          .setMinValues(0)
+          .setMaxValues(Math.min(roles.length, 10))
+          .addOptions(roles)
+      );
+
+      const userMenu = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("vb_ping_users")
+          .setPlaceholder("Select users to ping (optional)")
+          .setMinValues(0)
+          .setMaxValues(10)
+          .addOptions(members)
+      );
+
+      await i.update({
+        content: "Select who should be pinged:",
+        components: [roleMenu, userMenu]
+      });
+    }
+
+    // STEP 3
+    else if (i.customId === "vb_ping_roles") {
+      temp.pingRoles = i.values;
+      await i.deferUpdate();
+    }
+
+    else if (i.customId === "vb_ping_users") {
+      temp.pingUsers = i.values;
+
+      const data = loadVB();
+      data[interaction.guild.id] = {
+        channels: temp.detect,
+        popup: temp.popup,
+        pingRoles: temp.pingRoles || [],
+        pingUsers: temp.pingUsers || [],
+        warnings: {}
+      };
+      saveVB(data);
+
+      await i.update({
+        content: "✅ Auto-VB setup complete!",
+        components: []
+      });
+
+      collector.stop();
+    }
+  });
+}
+
 
 // ========================
 // VERIFICATION REACTION (BOT ONLY)
@@ -281,12 +329,11 @@ client.on("messageReactionAdd", async (reaction, user) => {
 // AUTO VB LIVE
 // ========================
 const BAD_WORDS = ["fuck", "shit", "bitch", "asshole"];
-
+  
 client.on("messageCreate", async message => {
-  if (!message.guild || message.author.bot || !message.content) return;
+  if (!message.guild || message.author.bot) return;
 
-  const allVB = loadVB();
-  const vb = allVB[message.guild.id];
+  const vb = loadVB()[message.guild.id];
   if (!vb) return;
   if (!vb.channels.includes(message.channel.id)) return;
 
@@ -295,17 +342,31 @@ client.on("messageCreate", async message => {
   );
   if (!found) return;
 
+  // Update warnings
   vb.warnings[message.author.id] =
     (vb.warnings[message.author.id] || 0) + 1;
 
-  saveVB(allVB);
+  saveVB(loadVB());
 
+  // 1️⃣ MESSAGE IN SAME CHANNEL
+  await message.channel.send(
+    `${message.author} has been detected for using **"${found}"**\n` +
+    `⚠️ Warnings: **${vb.warnings[message.author.id]}**`
+  );
+
+  // Build pings
+  const rolePings = vb.pingRoles.map(id => `<@&${id}>`).join(" ");
+  const userPings = vb.pingUsers.map(id => `<@${id}>`).join(" ");
+  const allPings = `${rolePings} ${userPings}`.trim();
+
+  // 2️⃣ POPUP CHANNEL EMBED
   const embed = new EmbedBuilder()
     .setColor("Red")
-    .setTitle("🚨 VB DETECTED")
+    .setTitle(message.author.username)
     .setDescription(
-      `User: ${message.author}\nWord: \`${found}\`\nWarnings: ${vb.warnings[message.author.id]}`
-    );
+      `He/She is now on **${vb.warnings[message.author.id]} warnings**\n\n${allPings}`
+    )
+    .setFooter({ text: "VB detected!!" });
 
   const popup = message.guild.channels.cache.get(vb.popup);
   if (popup) popup.send({ embeds: [embed] });
