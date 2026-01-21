@@ -13,8 +13,7 @@ const {
   StringSelectMenuBuilder,
   REST,
   Routes,
-  SlashCommandBuilder,
-  Events
+  SlashCommandBuilder
 } = require("discord.js");
 
 // ========================
@@ -27,6 +26,7 @@ function loadJSON(path) {
   if (!fs.existsSync(path)) return {};
   return JSON.parse(fs.readFileSync(path));
 }
+
 function saveJSON(path, data) {
   fs.writeFileSync(path, JSON.stringify(data, null, 2));
 }
@@ -42,14 +42,14 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.MessageContent
   ],
-  partials: [Partials.Message, Partials.Reaction, Partials.Channel, Partials.User]
+  partials: [Partials.Message, Partials.Reaction, Partials.Channel]
 });
 
 // ========================
 // SLASH COMMANDS
 // ========================
-const CLIENT_ID = "1460924904450035764";
-const GUILD_ID = "1457264127939579988";
+const CLIENT_ID = "PUT_YOUR_BOT_ID_HERE";
+const GUILD_ID = "PUT_YOUR_SERVER_ID_HERE";
 
 const commands = [
   new SlashCommandBuilder()
@@ -89,19 +89,17 @@ client.on("interactionCreate", async interaction => {
     return interaction.reply({ content: "❌ Owner only", ephemeral: true });
   }
 
-  const verifierData = loadJSON(VERIFIER_CONFIG);
-  const vbData = loadJSON(VB_CONFIG);
-
-  // -------------------- VERIFIER --------------------
+  // --------------------
+  // VERIFIER
+  // --------------------
   if (interaction.commandName === "verifier") {
     const sub = interaction.options.getSubcommand();
+    const verifierData = loadJSON(VERIFIER_CONFIG);
 
-    // SETUP VERIFIER
     if (sub === "set") {
       const channels = interaction.guild.channels.cache
         .filter(c => c.isTextBased())
         .map(c => ({ label: c.name, value: c.id }));
-
       const roles = interaction.guild.roles.cache.map(r => ({ label: r.name, value: r.id }));
 
       const menus = [
@@ -131,17 +129,14 @@ client.on("interactionCreate", async interaction => {
         )
       ];
 
-      await interaction.reply({
-        content: "Setup verifier:",
-        components: menus,
-        ephemeral: true
-      });
+      await interaction.reply({ content: "Setup verifier:", components: menus, ephemeral: true });
 
       const temp = {};
       const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
 
       collector.on("collect", async i => {
-        if (i.user.id !== interaction.user.id) return i.reply({ content: "❌ Not for you", ephemeral: true });
+        if (i.user.id !== interaction.user.id)
+          return i.reply({ content: "❌ Not for you", ephemeral: true });
 
         temp[i.customId] = i.values[0];
         await i.deferUpdate();
@@ -160,7 +155,6 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // SCAN OLD MESSAGES
     if (sub === "scan-old") {
       const cfg = verifierData[interaction.guild.id];
       if (!cfg) return interaction.reply({ content: "❌ Not set up", ephemeral: true });
@@ -183,21 +177,16 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  // -------------------- AUTO VB --------------------
+  // --------------------
+  // AUTO VB
+  // --------------------
   if (interaction.commandName === "autovb") {
     const channels = interaction.guild.channels.cache
       .filter(c => c.isTextBased())
       .map(c => ({ label: c.name, value: c.id }));
+    const roles = interaction.guild.roles.cache.map(r => ({ label: r.name, value: r.id }));
+    const members = interaction.guild.members.cache.map(m => ({ label: m.user.username, value: m.id })).slice(0, 25);
 
-    const roles = interaction.guild.roles.cache
-      .filter(r => r.id !== interaction.guild.id)
-      .map(r => ({ label: r.name, value: r.id }));
-
-    const members = interaction.guild.members.cache
-      .map(m => ({ label: m.user.username, value: m.id }))
-      .slice(0, 25); // Discord select menu limit
-
-    // Step 1: detection channels
     const detectMenu = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId("vb_detect")
@@ -207,19 +196,17 @@ client.on("interactionCreate", async interaction => {
         .addOptions(channels)
     );
 
-    await interaction.reply({ content: "Select channels for VB detection:", components: [detectMenu], ephemeral: true });
+    await interaction.reply({ content: "Select detection channels:", components: [detectMenu], ephemeral: true });
 
     const temp = {};
     const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
 
     collector.on("collect", async i => {
-      if (i.user.id !== interaction.user.id) return;
+      if (i.user.id !== interaction.user.id) return i.reply({ content: "❌ Not for you", ephemeral: true });
 
-      // STEP 1: detection channels
+      // Step 1: detect channels
       if (i.customId === "vb_detect") {
         temp.detect = i.values;
-
-        // Step 2: popup channel
         const popupMenu = new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId("vb_popup")
@@ -229,11 +216,10 @@ client.on("interactionCreate", async interaction => {
         await i.update({ content: "Select popup channel:", components: [popupMenu] });
       }
 
-      // STEP 2: popup channel
+      // Step 2: popup channel
       else if (i.customId === "vb_popup") {
         temp.popup = i.values[0];
 
-        // Step 3: select ping roles
         const roleMenu = new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId("vb_ping_roles")
@@ -243,7 +229,6 @@ client.on("interactionCreate", async interaction => {
             .addOptions(roles)
         );
 
-        // Step 3: select ping users
         const userMenu = new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId("vb_ping_users")
@@ -256,15 +241,16 @@ client.on("interactionCreate", async interaction => {
         await i.update({ content: "Select roles/users to ping:", components: [roleMenu, userMenu] });
       }
 
-      // STEP 3: ping roles
+      // Step 3: select ping roles
       else if (i.customId === "vb_ping_roles") {
         temp.pingRoles = i.values || [];
         await i.deferUpdate();
       }
 
-      // STEP 3: ping users
+      // Step 4: select ping users
       else if (i.customId === "vb_ping_users") {
         temp.pingUsers = i.values || [];
+        const vbData = loadJSON(VB_CONFIG);
 
         vbData[interaction.guild.id] = {
           channels: temp.detect,
@@ -283,27 +269,23 @@ client.on("interactionCreate", async interaction => {
 });
 
 // ========================
-// VERIFICATION REACTION
+// VERIFICATION REACTIONS
 // ========================
 client.on("messageReactionAdd", async (reaction, user) => {
   if (user.bot) return;
-
   if (reaction.partial) await reaction.fetch();
   if (reaction.message.partial) await reaction.message.fetch();
-
+  if (!reaction.message.author.bot) return;
   if (reaction.emoji.name !== "✅") return;
 
   const cfg = loadJSON(VERIFIER_CONFIG)[reaction.message.guild.id];
   if (!cfg) return;
 
-  // optional: only main channel
-  if (reaction.message.channel.id !== cfg.mainChannel) return;
-
-  const member = await reaction.message.guild.members.fetch(user.id).catch(() => null);
+  const member = await reaction.message.guild.members.fetch(user.id);
   if (!member) return;
 
   if (cfg.roleToRemove) await member.roles.remove(cfg.roleToRemove).catch(() => {});
-  if (cfg.roleToGive) await member.roles.add(cfg.roleToGive).catch(() => {});
+  await member.roles.add(cfg.roleToGive).catch(() => {});
 });
 
 // ========================
@@ -314,37 +296,36 @@ const BAD_WORDS = ["fuck", "shit", "bitch", "asshole"];
 client.on("messageCreate", async message => {
   if (!message.guild || message.author.bot || !message.content) return;
 
-  const vbData = loadJSON(VB_CONFIG);
-  const vb = vbData[message.guild.id];
-  if (!vb) return;
-  if (!vb.channels.includes(message.channel.id)) return;
+  const allVB = loadJSON(VB_CONFIG);
+  const vb = allVB[message.guild.id];
+  if (!vb || !vb.channels.includes(message.channel.id)) return;
 
   const found = BAD_WORDS.find(w => message.content.toLowerCase().includes(w));
   if (!found) return;
 
+  // update warnings
   vb.warnings[message.author.id] = (vb.warnings[message.author.id] || 0) + 1;
-  saveJSON(VB_CONFIG, vbData);
+  saveJSON(VB_CONFIG, allVB);
 
-  // Message in same channel
+  // message on same channel
   await message.channel.send(
-    `${message.author} has been detected for using **"${found}"**\n⚠️ Warnings: **${vb.warnings[message.author.id]}**`
+    `${message.author} has been detected for using **"${found}"**. ` +
+    `⚠️ Warnings: **${vb.warnings[message.author.id]}**`
   );
 
-  // Build ping mentions
+  // popup embed with pings
   const rolePings = (vb.pingRoles || []).map(id => `<@&${id}>`).join(" ");
   const userPings = (vb.pingUsers || []).map(id => `<@${id}>`).join(" ");
-  const allPings = [rolePings, userPings].filter(Boolean).join(" ");
+  const allPings = `${rolePings} ${userPings}`.trim();
 
-  // Popup embed
+  const embed = new EmbedBuilder()
+    .setColor("Red")
+    .setTitle(message.author.username)
+    .setDescription(`He/She is now on **${vb.warnings[message.author.id]} warnings**\n\n${allPings}`)
+    .setFooter({ text: "VB detected!!" });
+
   const popup = message.guild.channels.cache.get(vb.popup);
-  if (popup) {
-    const embed = new EmbedBuilder()
-      .setColor("Red")
-      .setTitle(message.author.username)
-      .setDescription(`He/She is now on **${vb.warnings[message.author.id]} warnings**\n${allPings}`)
-      .setFooter({ text: "VB detected!!" });
-    popup.send({ embeds: [embed] });
-  }
+  if (popup) popup.send({ embeds: [embed] });
 });
 
 // ========================
