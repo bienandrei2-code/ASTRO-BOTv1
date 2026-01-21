@@ -55,8 +55,8 @@ const client = new Client({
 // ========================
 // SLASH COMMAND REGISTRATION
 // ========================
-const CLIENT_ID = "PUT_YOUR_BOT_ID_HERE";
-const GUILD_ID = "PUT_YOUR_SERVER_ID_HERE";
+const CLIENT_ID = "1460924904450035764";
+const GUILD_ID = "1457264127939579988";
 
 const commands = [
   new SlashCommandBuilder()
