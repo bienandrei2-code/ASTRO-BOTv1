@@ -297,7 +297,6 @@ client.on("interactionCreate", async interaction => {
         content: "✅ Auto-VB setup complete!",
         components: []
       });
-
       collector.stop();
     }
   });
