@@ -1,23 +1,59 @@
+// verifier.js
 const fs = require("fs");
-const { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require("discord.js");
+const {
+  Client,
+  EmbedBuilder,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  REST,
+  Routes,
+  SlashCommandBuilder
+} = require("discord.js");
 
 const CONFIG = "./verifierConfig.json";
 
+// ---------------------
+// Helpers to load/save
+// ---------------------
 const load = () => fs.existsSync(CONFIG) ? JSON.parse(fs.readFileSync(CONFIG)) : {};
 const save = data => fs.writeFileSync(CONFIG, JSON.stringify(data, null, 2));
 
-module.exports = client => {
+module.exports = async (client) => {
 
-  // ========================
-  // SLASH COMMAND
-  // ========================
+  // ---------------------
+  // Auto-register /verify
+  // ---------------------
+  const command = new SlashCommandBuilder()
+    .setName("verify")
+    .setDescription("Setup the verifier system");
+
+  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+
+  client.once("ready", async () => {
+    try {
+      const guilds = client.guilds.cache.map(g => g.id);
+
+      for (const guildId of guilds) {
+        await rest.put(
+          Routes.applicationGuildCommands(client.user.id, guildId),
+          { body: [command.toJSON()] }
+        );
+      }
+      console.log("✅ /verify command registered in all guilds!");
+    } catch (err) {
+      console.error("Error registering /verify:", err);
+    }
+  });
+
+  // ---------------------
+  // Interaction Handler
+  // ---------------------
   client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName !== "verify") return;
     if (interaction.user.id !== interaction.guild.ownerId)
-      return interaction.reply({ content: "❌ Owner only", flags: 64 });
+      return interaction.reply({ content: "❌ Owner only", ephemeral: true });
 
-    // Fetch all text channels
     const channels = interaction.guild.channels.cache
       .filter(c => c.isTextBased())
       .map(c => ({ label: c.name, value: c.id }));
@@ -26,62 +62,62 @@ module.exports = client => {
       .filter(r => r.id !== interaction.guild.id)
       .map(r => ({ label: r.name, value: r.id }));
 
-    // Defer reply to prevent interaction timeout
-    await interaction.deferReply({ ephemeral: true });
+    // Dropbar menus
+    const rows = [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("main")
+          .setPlaceholder("Main verification channel")
+          .addOptions(channels)
+      ),
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("backup")
+          .setPlaceholder("Backup / scan-old channel")
+          .addOptions(channels)
+      ),
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("give")
+          .setPlaceholder("Role to GIVE")
+          .addOptions(roles)
+      ),
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("remove")
+          .setPlaceholder("Role to REMOVE")
+          .addOptions([{ label: "None", value: "none" }, ...roles])
+      )
+    ];
 
-    await interaction.editReply({
-      content: "🛡️ **Verifier Setup**",
-      components: [
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("main")
-            .setPlaceholder("Main verify channel")
-            .addOptions(channels)
-        ),
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("backup")
-            .setPlaceholder("Backup / Scan-old channel")
-            .addOptions(channels)
-        ),
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("give")
-            .setPlaceholder("Role to GIVE")
-            .addOptions(roles)
-        ),
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("remove")
-            .setPlaceholder("Role to REMOVE")
-            .addOptions(roles)
-        )
-      ]
-    });
+    await interaction.reply({ content: "🛡️ **Verifier Setup**", components: rows, ephemeral: true });
 
     const temp = {};
     const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
 
     collector.on("collect", async i => {
-      if (i.user.id !== interaction.user.id) return i.reply({ content: "❌ Not for you", flags: 64 });
-
+      if (i.user.id !== interaction.user.id) return;
       temp[i.customId] = i.values[0];
       await i.deferUpdate();
 
       if (temp.main && temp.backup && temp.give && temp.remove !== undefined) {
         const data = load();
-        data[interaction.guild.id] = temp;
+        data[interaction.guild.id] = {
+          main: temp.main,
+          backup: temp.backup,
+          give: temp.give,
+          remove: temp.remove === "none" ? null : temp.remove
+        };
         save(data);
-
-        await interaction.followUp({ content: "✅ Verifier configured!", flags: 64 });
+        await interaction.followUp({ content: "✅ Verifier configured!", ephemeral: true });
         collector.stop();
       }
     });
   });
 
-  // ========================
-  // REACTION VERIFY
-  // ========================
+  // ---------------------
+  // Reaction Handler
+  // ---------------------
   client.on("messageReactionAdd", async (reaction, user) => {
     if (user.bot || reaction.emoji.name !== "✅") return;
 
@@ -90,13 +126,15 @@ module.exports = client => {
 
     const member = await reaction.message.guild.members.fetch(user.id);
 
-    await member.roles.add(cfg.give).catch(() => {});
+    if (cfg.give) await member.roles.add(cfg.give).catch(() => {});
     if (cfg.remove) await member.roles.remove(cfg.remove).catch(() => {});
 
     const embed = new EmbedBuilder()
       .setColor("Green")
       .setTitle("✅ VERIFIED!")
-      .setDescription(`${member} was verified by ${reaction.message.author}\n🎉 Congrats!`)
+      .setDescription(
+        `${member} was verified by ${reaction.message.author}\n🎉 Congrats!`
+      )
       .setFooter({
         text: `Welcome to KillboundSMP! We're now at ${reaction.message.guild.memberCount} members`
       });
