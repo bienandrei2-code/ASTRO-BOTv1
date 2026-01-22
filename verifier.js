@@ -1,122 +1,101 @@
 // verifier.js
 const fs = require("fs");
 const {
-  Client,
-  EmbedBuilder,
   ActionRowBuilder,
-  StringSelectMenuBuilder,
-  REST,
-  Routes,
-  SlashCommandBuilder
+  ChannelSelectMenuBuilder,
+  RoleSelectMenuBuilder,
+  EmbedBuilder
 } = require("discord.js");
 
 const CONFIG = "./verifierConfig.json";
 
-// ---------------------
-// Helpers to load/save
-// ---------------------
-const load = () => fs.existsSync(CONFIG) ? JSON.parse(fs.readFileSync(CONFIG)) : {};
-const save = data => fs.writeFileSync(CONFIG, JSON.stringify(data, null, 2));
+const load = () => (fs.existsSync(CONFIG) ? JSON.parse(fs.readFileSync(CONFIG)) : {});
+const save = (data) => fs.writeFileSync(CONFIG, JSON.stringify(data, null, 2));
 
-module.exports = async (client) => {
+module.exports = (client) => {
 
   // ---------------------
-  // Auto-register /verify
+  // /verify COMMAND
   // ---------------------
-  const command = new SlashCommandBuilder()
-    .setName("verify")
-    .setDescription("Setup the verifier system");
-
-  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-
-  client.once("ready", async () => {
-    try {
-      const guilds = client.guilds.cache.map(g => g.id);
-
-      for (const guildId of guilds) {
-        await rest.put(
-          Routes.applicationGuildCommands(client.user.id, guildId),
-          { body: [command.toJSON()] }
-        );
-      }
-      console.log("✅ /verify command registered in all guilds!");
-    } catch (err) {
-      console.error("Error registering /verify:", err);
-    }
-  });
-
-  // ---------------------
-  // Interaction Handler
-  // ---------------------
-  client.on("interactionCreate", async interaction => {
+  client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName !== "verify") return;
+
+    // Owner only
     if (interaction.user.id !== interaction.guild.ownerId)
-      return interaction.reply({ content: "❌ Owner only", ephemeral: true });
-
-    const channels = interaction.guild.channels.cache
-      .filter(c => c.isTextBased())
-      .map(c => ({ label: c.name, value: c.id }));
-
-    const roles = interaction.guild.roles.cache
-      .filter(r => r.id !== interaction.guild.id)
-      .map(r => ({ label: r.name, value: r.id }));
+      return interaction.reply({ content: "❌ Only server owner can use this.", ephemeral: true });
 
     // Dropbar menus
-    const rows = [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("main")
-          .setPlaceholder("Main verification channel")
-          .addOptions(channels)
-      ),
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("backup")
-          .setPlaceholder("Backup / scan-old channel")
-          .addOptions(channels)
-      ),
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("give")
-          .setPlaceholder("Role to GIVE")
-          .addOptions(roles)
-      ),
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("remove")
-          .setPlaceholder("Role to REMOVE")
-          .addOptions([{ label: "None", value: "none" }, ...roles])
-      )
-    ];
+    const mainMenu = new ChannelSelectMenuBuilder()
+      .setCustomId("main")
+      .setPlaceholder("Select Main Verification Channel")
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addChannelTypes(0); // Text channels only
 
-    await interaction.reply({ content: "🛡️ **Verifier Setup**", components: rows, ephemeral: true });
+    const backupMenu = new ChannelSelectMenuBuilder()
+      .setCustomId("backup")
+      .setPlaceholder("Select Backup / Scan-Old Channel")
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addChannelTypes(0);
+
+    const giveRoleMenu = new RoleSelectMenuBuilder()
+      .setCustomId("give")
+      .setPlaceholder("Select Role to GIVE")
+      .setMinValues(1)
+      .setMaxValues(1);
+
+    const removeRoleMenu = new RoleSelectMenuBuilder()
+      .setCustomId("remove")
+      .setPlaceholder("Select Role to REMOVE (optional)")
+      .setMinValues(0)
+      .setMaxValues(1);
+
+    await interaction.reply({
+      content: "🛡️ **Verifier Setup**\nSelect channels and roles below:",
+      components: [
+        new ActionRowBuilder().addComponents(mainMenu),
+        new ActionRowBuilder().addComponents(backupMenu),
+        new ActionRowBuilder().addComponents(giveRoleMenu),
+        new ActionRowBuilder().addComponents(removeRoleMenu)
+      ],
+      ephemeral: true
+    });
 
     const temp = {};
-    const collector = interaction.channel.createMessageComponentCollector({ time: 120000 });
+    const collector = interaction.channel.createMessageComponentCollector({ time: 180000 });
 
-    collector.on("collect", async i => {
-      if (i.user.id !== interaction.user.id) return;
-      temp[i.customId] = i.values[0];
-      await i.deferUpdate();
+    collector.on("collect", async (i) => {
+      if (i.user.id !== interaction.user.id) return i.reply({ content: "❌ Not for you", ephemeral: true });
 
-      if (temp.main && temp.backup && temp.give && temp.remove !== undefined) {
+      if (i.isChannelSelectMenu() || i.isRoleSelectMenu()) {
+        temp[i.customId] = i.values[0] || null;
+        await i.deferUpdate();
+      }
+
+      if (temp.main && temp.backup && temp.give) {
         const data = load();
         data[interaction.guild.id] = {
           main: temp.main,
           backup: temp.backup,
           give: temp.give,
-          remove: temp.remove === "none" ? null : temp.remove
+          remove: temp.remove || null
         };
         save(data);
         await interaction.followUp({ content: "✅ Verifier configured!", ephemeral: true });
         collector.stop();
       }
     });
+
+    collector.on("end", (collected, reason) => {
+      if (reason === "time" && !temp.main)
+        interaction.followUp({ content: "⏰ Verifier setup timed out!", ephemeral: true });
+    });
   });
 
   // ---------------------
-  // Reaction Handler
+  // REACTION VERIFY
   // ---------------------
   client.on("messageReactionAdd", async (reaction, user) => {
     if (user.bot || reaction.emoji.name !== "✅") return;
@@ -132,9 +111,7 @@ module.exports = async (client) => {
     const embed = new EmbedBuilder()
       .setColor("Green")
       .setTitle("✅ VERIFIED!")
-      .setDescription(
-        `${member} was verified by ${reaction.message.author}\n🎉 Congrats!`
-      )
+      .setDescription(`${member} was verified by ${reaction.message.author}\n🎉 Congrats!`)
       .setFooter({
         text: `Welcome to KillboundSMP! We're now at ${reaction.message.guild.memberCount} members`
       });
@@ -142,5 +119,4 @@ module.exports = async (client) => {
     const channel = reaction.message.guild.channels.cache.get(cfg.main);
     if (channel) channel.send({ embeds: [embed] });
   });
-
 };
