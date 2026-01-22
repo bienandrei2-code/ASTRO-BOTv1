@@ -83,7 +83,7 @@ module.exports = client => {
         save(allData);
 
         await interaction.followUp({
-          content: "✅ **Auto-VB has been enabled successfully!**",
+          content: "✅ **Auto-VB enabled successfully!**",
           ephemeral: true
         });
 
@@ -108,25 +108,41 @@ module.exports = client => {
     );
     if (!bad) return;
 
+    // Update warnings
     cfg.warnings[msg.author.id] =
       (cfg.warnings[msg.author.id] || 0) + 1;
 
     save(allData);
 
-    const embed = new EmbedBuilder()
-      .setColor("Red")
-      .setTitle("🚨 DETECTED!")
+    const warningCount = cfg.warnings[msg.author.id];
+
+    // ======================
+    // WARNING MESSAGE (SAME CHANNEL)
+    // ======================
+    const warnEmbed = new EmbedBuilder()
+      .setColor("Orange")
+      .setTitle("⚠️ Warning!")
       .setDescription(
-        `${msg.author} has been detected!\n\n` +
-        `**Word:** ${bad}\n` +
-        `**Warnings:** ${cfg.warnings[msg.author.id]}\n\n` +
+        `${msg.author}, you are now on **${warningCount}** warning(s).\n\n` +
+        `**Word:** ${bad}`
+      );
+
+    await msg.channel.send({ embeds: [warnEmbed] });
+
+    // ======================
+    // POPUP MESSAGE
+    // ======================
+    const popupEmbed = new EmbedBuilder()
+      .setColor("Red")
+      .setTitle("🚨 Detected!")
+      .setDescription(
+        `${msg.author} was now on **${warningCount}** warning(s)\n\n` +
         (cfg.ping.length
           ? cfg.ping.map(r => `<@&${r}>`).join(" ")
           : "")
-      )
-      .setFooter({ text: "VB detected!" });
+      );
 
     const popupChannel = msg.guild.channels.cache.get(cfg.popup);
-    if (popupChannel) popupChannel.send({ embeds: [embed] });
+    if (popupChannel) popupChannel.send({ embeds: [popupEmbed] });
   });
 };
